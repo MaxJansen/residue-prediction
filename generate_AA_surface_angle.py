@@ -26,23 +26,33 @@ res2num = {"ALA": 0, "ASX": 1, "CYS": 2, "ASP": 3, "GLU": 4, "PHE": 5, "GLY": 6,
            "ARG": 15, "SER": 16, "THR": 17, "SEC": 18, "VAL": 19, "TRP": 20, "XAA": 21,
            "TYR": 22, "GLX": 23}
 
+def vectors_angle(v1, v2):
+    """ Gives angle between two vectors. Gets unit vectors first.
+    Max angle= 180 degrees (see cosine). Consider larger angles
+    for side-chains that are flipped in."""
+
+    v1_u= v1 / np.linalg.norm(v1)
+    v2_u = v2 / np.linalg.norm(v2)
+    return np.arccos(np.dot(v1_u,v2_u))
 
 def keep_inter_res(fname, inter_coords, center):
     """Loads a pdb and returns coord, atom type, AA type and AA resID
     Will only keep atoms within a distance threshold to interface surface points
     """
+
     # Load the data
-    parser = PDBParser()
+    parser = PDBParser(QUIET=True)
     structure = parser.get_structure("structure", fname)
     atoms = structure.get_atoms()
 
     dist_thres = 2
-
     coords = []
-    types = []
-    atom_residues = []
+    residues = []
     resseqs = []
     parent_list = []
+    vectors = []
+
+    # Iterate over all atoms and keep those close to surface points
     for atom in atoms:
         coord_list = atom.get_coord()
         dist_boolean = np.any(distance.cdist([coord_list],
@@ -52,45 +62,96 @@ def keep_inter_res(fname, inter_coords, center):
             # interesting to save how many atoms from given residue (AA parent),
             # were within distance metric, to assess ML model performance
 
-    parent_list = set(parent_list)
-    parent_list = list(parent_list)
+    parent_list = list(set(parent_list))
+    print(len(parent_list))
+
+    # Iterate through residues at interface
     for parent in parent_list:
-        atoms = parent.get_atoms()
-        for atom in atoms:
-            if str(atom.get_name()) == 'CA':
-                coords.append(atom.get_coord())
-                atom_residues.append(atom.get_parent().get_resname())
-                resseqs.append(atom.get_parent().get_full_id()[3][1])
-    if len(coords) != 0:
+        parent_type = parent.get_resname()
+        # Determine whether parent is glycine or not, because Gly has no CB
+        if parent_type == 'GLY':
+            gly_bool = 1
+        else:
+            gly_bool = 0
+
+        # For parent residue, function will append res and CB (or CA) traits to lists
+        coords, residues, resseqs, vectors = residue_append(
+            parent, coords, residues, resseqs, vectors, gly_bool)
+
+    # Check whether there is a vector for each c_coord and vice versa
+    if (len(coords) != 0) and (len(coords) == len(vectors)):
         coords = np.stack(coords)
+        vectors = np.stack(vectors)
     else:
+        print("No vectors for all point coordinates")
         pass
+    return {"xyz": coords, "AA_types": residues,
+            "SeqID": resseqs, "res_vector": vectors}
 
-    return {"xyz": coords, "AA_types": atom_residues,
-            "SeqID": resseqs}
+def residue_append(parent, coords, residues, resseqs, vectors, gly_bool):
+    """Gets called when iterating over residues. Returns name, res_id, vector between
+    main carbon atoms (O for glycine), and coordinates of main carbons"""
 
+    residues.append(parent.get_resname())
+    resseqs.append(parent.get_full_id()[3][1])
+    # Call function once for vector and coords
+    vector_coord = res_vector_coord(parent, gly_bool)
+    vectors.append(vector_coord[0])
+    # Will give CB coordinates for all other than Gly, and CA for Gly
+    coords.append(vector_coord[1])
+    return coords, residues, resseqs, vectors
 
-def get_close_points(ca_dict, surf_dict):
+def res_vector_coord(parent, gly_bool):
+    """Returns vector between main Carbon atoms (points at Cb) for all
+    non-Gly input residues. Returns vector pointing at Oxygen from Ca for Gly.
+    Also returns coordinate of 'main' carbon atom."""
+
+    atoms = parent.get_atoms()
+    for atom in atoms:
+        if str(atom.get_name()) == 'CA':
+            ca_coord = atom.get_coord()
+        elif str(atom.get_name()) == 'CB':
+            main_coord = atom.get_coord()
+            c_coord = main_coord
+        elif str(atom.get_name()) == 'O' and str(gly_bool == 1):
+            main_coord = atom.get_coord()
+        else:
+            pass
+    vector = main_coord - ca_coord
+
+    # Check if the vectors fall into two binned lengths
+    # print(np.linalg.norm(vector -0))
+
+    if gly_bool == 1:
+        c_coord = ca_coord
+
+    return vector, c_coord
+
+def get_close_points(c_dict, surf_dict):
     """Returns the 100 closest points to interface C-alpha atoms
-    # Loop goes through AA Ca and calculates distance to all points.
+    # Loop goes through AA main C and calculates distance to all points.
     # Picks closest 100 point coords and feats after sorting.
     Changed from original 20 points to 100"""
 
     types = []
     feats = []
-    for i, ca_coord in enumerate(ca_dict['xyz']):
-        dist_array = distance.cdist([ca_coord], surf_dict['xyz'],
+    for i, c_coord in enumerate(c_dict['xyz']):
+        dist_array = distance.cdist([c_coord], surf_dict['xyz'],
                                     'euclidean')[0]
-        # Consider adding distance as a feat!
+
         dist_index = np.argsort(dist_array)
-        selected_dists = dist_array[dist_index][0:100]
-        selected_coords = surf_dict['xyz'][dist_index][0:100]
-        selected_feats = surf_dict['feats'][dist_index][0:100]
+        selected_dists = dist_array[dist_index][0:20]
+        selected_coords = surf_dict['xyz'][dist_index][0:20]
+        #c_vector = c_dict['res_vector'][i]
+        #point_c_vectors = selected_coords - c_coord
+        #angles = (lambda x: vectors_angle(c_vector, x)(point_c_vectors))
+        #print(angles)
+        selected_feats = surf_dict['feats'][dist_index][0:20]
         selected_feats = np.column_stack((selected_feats, selected_dists))
         selected_feats = np.ravel(selected_feats)
         feats.append(selected_feats)
 
-        types.append(res2num[ca_dict['AA_types'][i]])
+        types.append(res2num[c_dict['AA_types'][i]])
 
     # =============================================================================
     # Uncomment this if you want to save point patch per AA, good in pymol
@@ -137,6 +198,7 @@ def convert_pdbs(pdb_dir):  # , inter_coords):
     counter = 0
     # Every pdb_id_chain in dir will be on the pdb side
     for p in tqdm(pdb_dir.glob("*.pdb")):
+        print(p)
         atom_chain = p.stem
         pdb_id = atom_chain.split('_')[0]
         all_stem = pdb_dir.glob(pdb_id + "*.pdb")
@@ -166,7 +228,7 @@ def convert_pdbs(pdb_dir):  # , inter_coords):
                                  close_points["target_type"]), axis=0)
                     else:
                         pass
-
+        break
     return points_dict
 
 
@@ -174,6 +236,6 @@ data_dict = convert_pdbs(Path('../dataset/pdbs/'))
 
 # Uncomment to save dataset, including distance
 
-np.save("../dataset/dist_train_data.npy", data_dict['feat_data'])
-np.save("../dataset/dist_train_target.npy", data_dict['target_type'])
+#np.save("../dataset/dist_train_data.npy", data_dict['feat_data'])
+#np.save("../dataset/dist_train_target.npy", data_dict['target_type'])
 
