@@ -142,10 +142,10 @@ def get_close_points(c_dict, surf_dict):
         dist_index = np.argsort(dist_array)
         selected_dists = dist_array[dist_index][0:20]
         selected_coords = surf_dict['xyz'][dist_index][0:20]
-        #c_vector = c_dict['res_vector'][i]
-        #point_c_vectors = selected_coords - c_coord
-        #angles = (lambda x: vectors_angle(c_vector, x)(point_c_vectors))
-        #print(angles)
+        c_vector = c_dict['res_vector'][i]
+        point_c_vectors = selected_coords - c_coord
+        angles = map(vectors_angle, c_vector, point_c_vectors)
+        print(angles)
         selected_feats = surf_dict['feats'][dist_index][0:20]
         selected_feats = np.column_stack((selected_feats, selected_dists))
         selected_feats = np.ravel(selected_feats)
