@@ -83,9 +83,10 @@ def get_close_points(ca_dict, surf_dict):
                                     'euclidean')[0]
         # Consider adding distance as a feat!
         dist_index = np.argsort(dist_array)
-        print(dist_index)
+        selected_dists = dist_array[dist_index][0:100]
         selected_coords = surf_dict['xyz'][dist_index][0:100]
         selected_feats = surf_dict['feats'][dist_index][0:100]
+        selected_feats = np.column_stack((selected_feats, selected_dists))
         selected_feats = np.ravel(selected_feats)
         feats.append(selected_feats)
 
@@ -136,7 +137,6 @@ def convert_pdbs(pdb_dir):  # , inter_coords):
     counter = 0
     # Every pdb_id_chain in dir will be on the pdb side
     for p in tqdm(pdb_dir.glob("*.pdb")):
-        print("test")
         atom_chain = p.stem
         pdb_id = atom_chain.split('_')[0]
         all_stem = pdb_dir.glob(pdb_id + "*.pdb")
@@ -174,6 +174,6 @@ data_dict = convert_pdbs(Path('../dataset/pdbs/'))
 
 # Uncomment to save dataset, including distance
 
-# np.save("../dataset/dist_train_data.npy", data_dict['feat_data'])
-# np.save("../dataset/dist_train_target.npy", data_dict['target_type'])
-print(data_dict['feat_data'][0:10])
+np.save("../dataset/dist_train_data.npy", data_dict['feat_data'])
+np.save("../dataset/dist_train_target.npy", data_dict['target_type'])
+
